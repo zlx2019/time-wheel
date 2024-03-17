@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/demdxx/gocast"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +96,6 @@ func (dtw *DistributedTimeWheel) run() {
 func (dtw *DistributedTimeWheel) dispatchReadyTasks()  {
 	defer func() {
 		if err:= recover(); err != nil{
-			// TODO 错误处理
 			panic(err)
 		}
 	}()
@@ -124,17 +124,17 @@ func (dtw *DistributedTimeWheel) doBatchTask (ctx context.Context,tasks []*HTTPT
 		wg.Add(1)
 		task := task
 		go func() {
-			// 错误处理
 			defer func() {
 				if err := recover();err != nil{
-					// TODO LOG
+					// 捕获错误
+					log.Printf("[ERROR] dispatch task [%s] error: %v",task.Key, err)
 				}
 				wg.Done()
 			}()
 
 			// 对定时任务发起HTTP请求
 			if err := dtw.doTask(ctx, task); err != nil{
-				// TODO LOG
+				panic(err)
 			}
 		}()
 	}
@@ -157,8 +157,10 @@ func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*H
 	// 获取当前时间这一秒，至下一秒之间作为 score 的左右边界，进行条件检索
 	// 将当前时间精确到秒
 	nowSecond := utils.GetTimeSecond(now)
+	// 当前秒的起始时间戳
 	scoreStart := nowSecond.Unix()
-	// 减一毫秒，防止任务提前一秒就被执行
+	// 获取当前秒的截止时间戳(最后一毫秒)
+	// 例如: 12:30:05.000 ~ 12:30:05.999
 	scoreEnd := nowSecond.Add(time.Second - time.Millisecond).Unix()
 
 	// 查询Redis，获取当前这一秒可以被执行的定时任务，以及是否有任务被删除的标识集合

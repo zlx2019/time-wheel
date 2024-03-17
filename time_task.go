@@ -58,3 +58,16 @@ func NewHTTPTimeTask(key, callback, method string, times int) *HTTPTimeTask {
 		Headers:     nil,
 	}
 }
+
+func (task *HTTPTimeTask) SetQuery(query map[string]string)  {
+	task.Query = query
+}
+
+func (task *HTTPTimeTask) SetHeaders(headers map[string]string)  {
+	task.Headers = headers
+}
+
+func (task *HTTPTimeTask) SetBody(body map[string]any)  {
+	task.RequestBody = body
+}
+
