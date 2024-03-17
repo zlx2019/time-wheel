@@ -209,7 +209,6 @@ func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*H
 
 // AddTask 向时间轮中添加任务
 // task: 要添加的定时任务
-// Delay: 任务延迟时长
 func (dtw *DistributedTimeWheel) addTask(ctx context.Context, task *HTTPTimeTask) error {
 	// 校验定时任务基础参数
 	if err := dtw.taskPreCheck(task); err != nil {
