@@ -40,11 +40,10 @@ type HTTPTimeTask struct {
 	RequestBody map[string]any `json:"request_body"`
 	// 请求头数据
 	Headers map[string]string `json:"headers"`
-
 	// 执行次数
 	Times int `json:"times"`
 	// 每次执行的延迟时间
-	delay time.Duration `json:"delay"`
+	Delay time.Duration `json:"delay"`
 }
 
 func NewHTTPTimeTask(key, callback, method string, times int) *HTTPTimeTask {
@@ -57,4 +56,16 @@ func NewHTTPTimeTask(key, callback, method string, times int) *HTTPTimeTask {
 		RequestBody: nil,
 		Headers:     nil,
 	}
+}
+
+func (task *HTTPTimeTask) SetQuery(query map[string]string) {
+	task.Query = query
+}
+
+func (task *HTTPTimeTask) SetHeaders(headers map[string]string) {
+	task.Headers = headers
+}
+
+func (task *HTTPTimeTask) SetBody(body map[string]any) {
+	task.RequestBody = body
 }

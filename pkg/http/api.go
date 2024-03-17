@@ -48,7 +48,7 @@ func (client *Client) Request(ctx context.Context, url, method string, reply any
 	for k, v := range headers {
 		request.Header.Add(k, v)
 	}
-	request.Header.Add("Content-Type","application/json")
+	request.Header.Add("Content-Type", "application/json")
 	// 发起请求
 	response, err := client.Do(request)
 
@@ -69,20 +69,22 @@ func (client *Client) Request(ctx context.Context, url, method string, reply any
 	if err != nil {
 		return err
 	}
-
-	// 将响应数据写入到 reply 结构中
-	return json.Unmarshal(responseBody, reply)
+	if reply != nil {
+		// 将响应数据写入到 reply 结构中
+		return json.Unmarshal(responseBody, reply)
+	}
+	return nil
 }
 
 // 将 query 查询条件与url进行拼接处理
-func getCompleteUrl(baseUrl string, params query) string{
-	if len(params) == 0{
+func getCompleteUrl(baseUrl string, params query) string {
+	if len(params) == 0 {
 		return baseUrl
 	}
 	// 将 query 中的每一组条件，拼接成: key1=val1&key2=val2&...
 	values := url.Values{}
 	for k, v := range params {
-		values.Add(k,v)
+		values.Add(k, v)
 	}
 	queryStr, _ := url.QueryUnescape(values.Encode())
 	return fmt.Sprintf("%s?%s", baseUrl, queryStr)

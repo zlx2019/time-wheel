@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/demdxx/gocast"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ func NewDistributedTimeWheel(rClient *redis.Client, hClient *http.Client) *Distr
 		redisClient: rClient,
 		httpClient:  hClient,
 		ticker:      time.NewTicker(time.Second),
-		stopCh: make(chan struct{}),
+		stopCh:      make(chan struct{}),
 	}
 
 	// 开启异步协程,启动时间轮
@@ -49,7 +50,7 @@ func NewDistributedTimeWheel(rClient *redis.Client, hClient *http.Client) *Distr
 // key: 要删除的任务的唯一标识
 // execAt: 该任务的执行时间，用来确定删除时放入哪个Set集合
 func (dtw *DistributedTimeWheel) RemoveTask(ctx context.Context, key string, execAt time.Time) error {
-	_, err := dtw.redisClient.Eval(ctx, RemoveTaskScript, 1, []any{
+	_, err := dtw.redisClient.Eval(ctx, removeTaskScript, 1, []any{
 		dtw.getTaskOfDelSetKey(execAt),
 		key,
 	})
@@ -57,7 +58,7 @@ func (dtw *DistributedTimeWheel) RemoveTask(ctx context.Context, key string, exe
 }
 
 // Shutdown 关闭时间轮
-func (dtw *DistributedTimeWheel) Shutdown()  {
+func (dtw *DistributedTimeWheel) Shutdown() {
 	dtw.once.Do(func() {
 		close(dtw.stopCh)
 		dtw.ticker.Stop()
@@ -67,21 +68,21 @@ func (dtw *DistributedTimeWheel) Shutdown()  {
 
 // AddDelayTask 添加延迟任务
 func (dtw *DistributedTimeWheel) AddDelayTask(ctx context.Context, task *HTTPTimeTask, execAt time.Time) error {
-	task.delay = execAt.Sub(time.Now())
+	task.Delay = execAt.Sub(time.Now())
 	return dtw.addTask(ctx, task)
 }
 
 // AddTask 添加定时任务
 func (dtw *DistributedTimeWheel) AddTask(ctx context.Context, task *HTTPTimeTask, delay time.Duration) error {
-	task.delay = delay
+	task.Delay = delay
 	return dtw.addTask(ctx, task)
 }
 
 // 运行时间轮
 func (dtw *DistributedTimeWheel) run() {
-	for  {
+	for {
 		select {
-		case <- dtw.stopCh:
+		case <-dtw.stopCh:
 			// 时间轮被关闭
 			return
 		case <-dtw.ticker.C:
@@ -92,10 +93,9 @@ func (dtw *DistributedTimeWheel) run() {
 }
 
 // 定时器触发，开始调度处理定时任务
-func (dtw *DistributedTimeWheel) dispatchReadyTasks()  {
+func (dtw *DistributedTimeWheel) dispatchReadyTasks() {
 	defer func() {
-		if err:= recover(); err != nil{
-			// TODO 错误处理
+		if err := recover(); err != nil {
 			panic(err)
 		}
 	}()
@@ -113,28 +113,35 @@ func (dtw *DistributedTimeWheel) dispatchReadyTasks()  {
 	if len(tasks) == 0 {
 		return
 	}
-	dtw.doBatchTask(ctx,tasks)
+	dtw.doBatchTask(ctx, tasks)
 }
 
 // 批量执行定时任务
-func (dtw *DistributedTimeWheel) doBatchTask (ctx context.Context,tasks []*HTTPTimeTask) {
+func (dtw *DistributedTimeWheel) doBatchTask(ctx context.Context, tasks []*HTTPTimeTask) {
 	// 并发执行定时任务
 	var wg sync.WaitGroup
 	for _, task := range tasks {
 		wg.Add(1)
 		task := task
 		go func() {
-			// 错误处理
 			defer func() {
-				if err := recover();err != nil{
-					// TODO LOG
+				if err := recover(); err != nil {
+					log.Println(err)
 				}
 				wg.Done()
 			}()
 
 			// 对定时任务发起HTTP请求
-			if err := dtw.doTask(ctx, task); err != nil{
-				// TODO LOG
+			if err := dtw.doTask(ctx, task); err != nil {
+				panic(fmt.Errorf("[ERROR] task [%s] call fail:%s \n", task.Key, err.Error()))
+			}
+			// 任务执行成功
+			task.Times--
+			// 如果是循环定时任务，或者还有执行次数
+			if task.Times > 0 || task.Times < -1 {
+				if err := dtw.addTask(context.Background(), task); err != nil {
+					panic(fmt.Errorf("[ERROR] task [%s] readd fail: %s \n", task.Key, err.Error()))
+				}
 			}
 		}()
 	}
@@ -148,7 +155,7 @@ func (dtw *DistributedTimeWheel) doTask(ctx context.Context, task *HTTPTimeTask)
 }
 
 // 获取当前就绪的定时任务
-func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*HTTPTimeTask,error) {
+func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*HTTPTimeTask, error) {
 	// 获取当前这一秒对应的定时任务列表的Key
 	now := time.Now()
 	setKey := dtw.getTaskOfZSetKey(now)
@@ -157,12 +164,14 @@ func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*H
 	// 获取当前时间这一秒，至下一秒之间作为 score 的左右边界，进行条件检索
 	// 将当前时间精确到秒
 	nowSecond := utils.GetTimeSecond(now)
+	// 当前秒的起始时间戳
 	scoreStart := nowSecond.Unix()
-	// 减一毫秒，防止任务提前一秒就被执行
+	// 获取当前秒的截止时间戳(最后一毫秒)
+	// 例如: 12:30:05.000 ~ 12:30:05.999
 	scoreEnd := nowSecond.Add(time.Second - time.Millisecond).Unix()
 
 	// 查询Redis，获取当前这一秒可以被执行的定时任务，以及是否有任务被删除的标识集合
-	reply, err := dtw.redisClient.Eval(ctx, GetTaskScript, 2, []any{
+	reply, err := dtw.redisClient.Eval(ctx, getTaskScript, 2, []any{
 		setKey, delSetKey,
 		scoreStart, scoreEnd,
 	})
@@ -195,37 +204,33 @@ func (dtw *DistributedTimeWheel) getCurrentReadyTasks(ctx context.Context) ([]*H
 		}
 		tasks = append(tasks, &task)
 	}
-	return tasks,nil
+	return tasks, nil
 }
 
 // AddTask 向时间轮中添加任务
 // task: 要添加的定时任务
-// delay: 任务延迟时长
+// Delay: 任务延迟时长
 func (dtw *DistributedTimeWheel) addTask(ctx context.Context, task *HTTPTimeTask) error {
 	// 校验定时任务基础参数
-	if err := dtw.taskPreCheck(task);err != nil {
+	if err := dtw.taskPreCheck(task); err != nil {
 		return err
 	}
 	// 将定时任务序列化为 Json 格式, 作为存储类型
 	taskJson, _ := json.Marshal(task)
 	// 获取任务的执行时间
-	execAt := time.Now().Add(task.delay)
+	execAt := time.Now().Add(task.Delay)
 	// 准备Lua脚本参数
 	args := []any{
-		dtw.getTaskOfZSetKey(execAt), // 设置 KEYS[1]，即任务要存储的ZSet的Key
+		dtw.getTaskOfZSetKey(execAt),   // 设置 KEYS[1]，即任务要存储的ZSet的Key
 		dtw.getTaskOfDelSetKey(execAt), // 设置 KEYS[2], 即该任务删除时，要标记的Set结构的Key
-		execAt.Unix(), // 设置 ARGV[1], 即在ZSet中的score. 将任务执行时间转换为以秒为单位的时间戳，作为排序的score
-		string(taskJson), // 设置 ARGV[2]，即具体要设置的Value
-		task.Key,			 // 设置 ARGV[3]，该任务的唯一标识符
+		execAt.Unix(),                  // 设置 ARGV[1], 即在ZSet中的score. 将任务执行时间转换为以秒为单位的时间戳，作为排序的score
+		string(taskJson),               // 设置 ARGV[2]，即具体要设置的Value
+		task.Key,                       // 设置 ARGV[3]，该任务的唯一标识符
 	}
 	// 通过执行 Lua 脚本，将定时任务添加到 Redis中
-	_, err := dtw.redisClient.Eval(ctx, ZAddTaskScript, 2, args)
+	_, err := dtw.redisClient.Eval(ctx, zAddTaskScript, 2, args)
 	return err
 }
-
-
-
-
 
 // 定时任务检验
 func (dtw *DistributedTimeWheel) taskPreCheck(task *HTTPTimeTask) error {
@@ -237,14 +242,11 @@ func (dtw *DistributedTimeWheel) taskPreCheck(task *HTTPTimeTask) error {
 	default:
 		return fmt.Errorf("invalid method: %s", task.Method)
 	}
-	if !strings.HasPrefix(task.CallbackUrl,"http://") && !strings.HasPrefix(task.CallbackUrl,"https://") {
+	if !strings.HasPrefix(task.CallbackUrl, "http://") && !strings.HasPrefix(task.CallbackUrl, "https://") {
 		return fmt.Errorf("invalid url: %s", task.CallbackUrl)
 	}
 	return nil
 }
-
-
-
 
 // 根据一个任务的执行时间，获取它要存储的ZSet的Key，将时间格式化为分钟为单位作为ZSet的Key
 func (dtw *DistributedTimeWheel) getTaskOfZSetKey(taskExecAt time.Time) string {

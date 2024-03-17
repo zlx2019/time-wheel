@@ -2,9 +2,9 @@ package timewheel
 
 // Lua 执行脚本.
 
-// ZAddTaskScript 添加定时任务 lua 脚本指令
+// zAddTaskScript 添加定时任务 lua 脚本指令
 // 将定时任务添加到ZSet结构，定时任务的执行时间戳(秒)作为score值.
-const ZAddTaskScript = `
+const zAddTaskScript = `
 	-- 获取第一个参数名称, 也就是任务要添加的那个ZSet结构的Key
 	local zSetKey = KEYS[1]
 	-- 获取第二个参数名称, 也就是该任务对应的删除后要放入的Set结构的Key
@@ -22,9 +22,9 @@ const ZAddTaskScript = `
 	return redis.call('zadd', zSetKey, score, task)
 `
 
-// RemoveTaskScript 删除定时任务的 lua 脚本指令
+// removeTaskScript 删除定时任务的 lua 脚本指令
 // 将要删除的定时任务标识，添加到一个Set集合中，表示该任务已被删除，不必再次执行，并且返回该集合的元素数量.
-const RemoveTaskScript = `
+const removeTaskScript = `
 	-- 获取 set 的key
 	local delSetKey = KEYS[1]
 	-- 获取任务的唯一标识
@@ -39,8 +39,8 @@ const RemoveTaskScript = `
 	return sCount
 `
 
-// GetTaskScript 获取当前时间对应的 定时任务列表，以及标识已经删除的任务列表
-const GetTaskScript = `
+// getTaskScript 获取当前时间对应的 定时任务列表，以及标识已经删除的任务列表
+const getTaskScript = `
 	local tasksZSetKey = KEYS[1] -- 要读取的 ZSet 定时任务集合的Key
 	local taskDelSetKey = KEYS[2] -- 要读取的 Set 标识删除集合的Key
 	local scoreStart = ARGV[1]	-- 要检索的score起始大小

@@ -24,7 +24,7 @@ type TimeWheel struct {
 	isRun bool
 
 	// 时间轮数组，每个元素就表示一个时间刻度，指向一个定时任务链表.
-	slots []* list.List
+	slots []*list.List
 	// 当前所在的时间刻度位置，也就是 slots 的索引位.
 	curSlot int
 	// 映射表，用于记录每个定时任务在哪个任务链表中的哪个节点上，主要是方便后续的删除.
@@ -54,7 +54,7 @@ func NewTimeWheel(scale int, interval time.Duration) *TimeWheel {
 		interval:     interval,
 		ticker:       time.NewTicker(interval),
 		isRun:        false,
-		slots:        make([]*list.List, 0,scale),
+		slots:        make([]*list.List, 0, scale),
 		taskMapping:  make(map[string]*list.Element),
 		stopCh:       make(chan struct{}),
 		addTaskCh:    make(chan *timeTask),
@@ -80,7 +80,7 @@ func (tw *TimeWheel) run() {
 			panic(err)
 		}
 	}()
-	for  {
+	for {
 		select {
 		case <-tw.stopCh:
 			// 时间轮停止
@@ -89,7 +89,7 @@ func (tw *TimeWheel) run() {
 		case <-tw.ticker.C:
 			//  开始批量执行定时任务
 			tw.dispatchReadyTasks()
-		case task := <- tw.addTaskCh:
+		case task := <-tw.addTaskCh:
 			//  注册定时任务
 			tw.registerTask(task)
 		case taskKey := <-tw.removeTaskCh:
@@ -98,7 +98,6 @@ func (tw *TimeWheel) run() {
 		}
 	}
 }
-
 
 // Shutdown 关闭时间轮
 func (tw *TimeWheel) Shutdown() {
@@ -113,9 +112,8 @@ func (tw *TimeWheel) Shutdown() {
 
 // AddDelayTask 添加延迟任务
 func (tw *TimeWheel) AddDelayTask(key string, task func() error, delay time.Time) {
-	tw.AddTask(key,task, time.Until(delay), 1)
+	tw.AddTask(key, task, time.Until(delay), 1)
 }
-
 
 // AddLoopTask 添加定时任务
 func (tw *TimeWheel) AddLoopTask(key string, task func() error, delay time.Duration) {
@@ -124,11 +122,11 @@ func (tw *TimeWheel) AddLoopTask(key string, task func() error, delay time.Durat
 
 // AddTask 添加任务
 func (tw *TimeWheel) AddTask(key string, task func() error, delay time.Duration, times int) {
-	tw.addTask(key,task, delay, times)
+	tw.addTask(key, task, delay, times)
 }
 
 // RemoveTask 删除定时任务
-func (tw *TimeWheel) RemoveTask(key string)  {
+func (tw *TimeWheel) RemoveTask(key string) {
 	tw.cancelTask(key)
 }
 
@@ -144,11 +142,11 @@ func (tw *TimeWheel) dispatchReadyTasks() {
 
 // 批量执行任务，每次处理一个任务链表
 // tasks: 要处理的定时任务链表
-func (tw *TimeWheel) batchDoTask(tasks *list.List)  {
+func (tw *TimeWheel) batchDoTask(tasks *list.List) {
 	// 从链表头结点开始遍历
 	for elem := tasks.Front(); elem != nil; {
 		// 获取任务
-		task,_ := elem.Value.(*timeTask)
+		task, _ := elem.Value.(*timeTask)
 		// 判断任务是否是属于本轮次可执行
 		if task.delayCycle > 0 {
 			// 表示该任务还未到所属的 执行轮次，对存次进行递减即可
@@ -163,7 +161,7 @@ func (tw *TimeWheel) batchDoTask(tasks *list.List)  {
 				if err := recover(); err != nil {
 					if e, ok := err.(*taskRuntimeError); ok {
 						// TODO 输出异常栈信息
-						log.Printf("[ERROR] dispatch task [%s] error: %s",e.key, e.message)
+						log.Printf("[ERROR] dispatch task [%s] error: %s", e.key, e.message)
 					}
 				}
 			}()
@@ -177,7 +175,7 @@ func (tw *TimeWheel) batchDoTask(tasks *list.List)  {
 			log.Printf("[LOG] dispatch task [%s] success\n", task.key)
 			task.times--
 			//  判断是否还有执行次数，或者是一个重复调度的定时任务，如果是就将任务继续注册到时间轮
-			if task.times > 0 || task.times < -1{
+			if task.times > 0 || task.times < -1 {
 				tw.addTask(task.key, task.task, task.delay, task.times)
 			}
 		}()
@@ -192,7 +190,7 @@ func (tw *TimeWheel) batchDoTask(tasks *list.List)  {
 }
 
 // 时间轮指针移动到下一个刻度
-func (tw *TimeWheel) incrCurSlot()  {
+func (tw *TimeWheel) incrCurSlot() {
 	// 到达时间轮尾部后，重新回到头部
 	tw.curSlot = (tw.curSlot + 1) % len(tw.slots)
 }
@@ -200,24 +198,23 @@ func (tw *TimeWheel) incrCurSlot()  {
 // 向时间轮中添加定时任务
 // key: 任务的唯一标识
 // task: 任务函数
-// delay: 延迟的时长(相对时间)
+// Delay: 延迟的时长(相对时间)
 // times: 执行的次数
-func (tw *TimeWheel) addTask(key string, task func()error, delay time.Duration, times int) {
+func (tw *TimeWheel) addTask(key string, task func() error, delay time.Duration, times int) {
 	// 延迟的时长 -1 毫秒，是为了算 pos 的位置更精准
 	pos, delayCycle := tw.getTaskPosAndCycle(delay - time.Millisecond)
 	tw.addTaskCh <- &timeTask{
-		task:  task,
-		pos:   pos,
+		task:       task,
+		pos:        pos,
 		delayCycle: delayCycle,
-		times: times,
-		delay: delay,
-		key:   key,
+		times:      times,
+		delay:      delay,
+		key:        key,
 	}
 }
 
-
 // 根据定时任务的执行时间，计算出该放入哪个刻度的任务链表中，以及需要延迟的轮次
-func (tw *TimeWheel) getTaskPosAndCycle(delayTime time.Duration) (int,int){
+func (tw *TimeWheel) getTaskPosAndCycle(delayTime time.Duration) (int, int) {
 	// 将延迟的时长转为毫秒
 	delay := int(delayTime)
 	// 获取时间轮轮询一轮所需要的总时长
@@ -225,7 +222,7 @@ func (tw *TimeWheel) getTaskPosAndCycle(delayTime time.Duration) (int,int){
 	// 需要延迟的轮次 = 延迟时长 \ 总时长
 	delayCycle := delay / totalInterval
 	// 该放入的任务链表索引
-	pos := (tw.curSlot + delay / int(tw.interval)) % len(tw.slots)
+	pos := (tw.curSlot + delay/int(tw.interval)) % len(tw.slots)
 	return pos, delayCycle
 }
 
@@ -234,7 +231,7 @@ func (tw *TimeWheel) registerTask(task *timeTask) {
 	// 获取从属的任务链表
 	taskList := tw.slots[task.pos]
 	// 如果定时任务的key已存在，则删除之前的任务
-	if _, ok := tw.taskMapping[task.key]; ok{
+	if _, ok := tw.taskMapping[task.key]; ok {
 		tw.RemoveTask(task.key)
 	}
 	// 将定时任务添加到链表尾部，并且获取存储的节点
@@ -244,14 +241,14 @@ func (tw *TimeWheel) registerTask(task *timeTask) {
 }
 
 // 取消定时任务
-func (tw *TimeWheel) cancelTask(key string)  {
+func (tw *TimeWheel) cancelTask(key string) {
 	// 从映射表中获取定时任务对应的链表节点
 	element, ok := tw.taskMapping[key]
-	if  !ok {
+	if !ok {
 		return
 	}
 	// 强转为自定义的任务类型
-	task,ok := element.Value.(*timeTask)
+	task, ok := element.Value.(*timeTask)
 	if ok {
 		tw.slots[task.pos].Remove(element)
 	}
